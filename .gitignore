@@ -397,3 +397,5 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 /.idea/.idea.AtFileFtp/.idea/workspace.xml
+/.idea/.idea.AtFileWebDav/.idea/workspace.xml
+/AtFileFtp/.env

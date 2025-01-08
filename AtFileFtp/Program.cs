@@ -3,10 +3,13 @@
 // Setup dependency injection
 
 using AtFileWebDav;
+using dotenv.net;
 using FishyFlip.Models;
 using FubarDev.FtpServer;
 using FubarDev.FtpServer.FileSystem;
 using Microsoft.Extensions.DependencyInjection;
+
+DotEnv.Load(options: new DotEnvOptions(probeForEnv: true, probeLevelsToSearch: 999));
 
 var services = new ServiceCollection();
 
@@ -15,8 +18,9 @@ var services = new ServiceCollection();
 // AnonymousMembershipProvider = allow only anonymous logins
 services
     .AddSingleton<IFileSystemClassFactory>(new AtFileFileSystemProvider(
-        ATDid.Create("did:plc:nmc77zslrwafxn75j66mep6o")!,
-        ""
+        ATDid.Create(Environment.GetEnvironmentVariable("BSKY_USERNAME")!)!,
+        Environment.GetEnvironmentVariable("BSKY_PASSWORD")!,
+        Environment.GetEnvironmentVariable("BSKY_PDS")!
     ))
     .AddFtpServer(builder => builder
         .EnableAnonymousAuthentication()); // allow anonymous logins

@@ -6,7 +6,7 @@ public static class Rkeys
 {
     public static string FromFilePath(string filepath)
     {
-        if (filepath == "") throw new InvalidOperationException("File path is empty!");
+        if (filepath == "") return "";
 
         if (filepath.Contains(":")) throw new InvalidOperationException("`:` character not allowed in file path!");
 
@@ -30,7 +30,7 @@ public static class Rkeys
             if (match.ValueSpan[0] == '\\' || match.ValueSpan[0] == '/') {
                 return ":";
             }
-            return $"_{(int)match.ValueSpan[0]:xxxx}";
+            return $"_{(int)match.ValueSpan[0]:x4}";
         });
 
         filepath = filepath.ToLowerInvariant();
