@@ -4,12 +4,10 @@
 
 using System.Security.Claims;
 using System.Security.Principal;
-using AtFileWebDav;
+using AtFileFtp;
 using dotenv.net;
-using FishyFlip.Models;
 using FubarDev.FtpServer;
 using FubarDev.FtpServer.AccountManagement;
-using FubarDev.FtpServer.AccountManagement.Compatibility;
 using FubarDev.FtpServer.FileSystem;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -47,23 +45,26 @@ await using (var serviceProvider = services.BuildServiceProvider())
     await ftpServerHost.StopAsync(CancellationToken.None);
 }
 
-public class AllowAnyMembershipProvider : IMembershipProvider
+namespace AtFileFtp
 {
-    public Task<MemberValidationResult> ValidateUserAsync(string username, string password)
+    public class AllowAnyMembershipProvider : IMembershipProvider
     {
-        return Task.FromResult(new MemberValidationResult(MemberValidationStatus.AuthenticatedUser, new ClaimsPrincipal(new BlueskyIdentity(username, password))));
+        public Task<MemberValidationResult> ValidateUserAsync(string username, string password)
+        {
+            return Task.FromResult(new MemberValidationResult(MemberValidationStatus.AuthenticatedUser, new ClaimsPrincipal(new BlueskyIdentity(username, password))));
+        }
     }
-}
 
-public class BlueskyIdentity(string name, string password) : ClaimsIdentity(new BlueskyIdentityInner(name))
-{
-    public new string Name { get; } = name;
-    public string Password { get; } = password;
-    
-    private class BlueskyIdentityInner(string name) : IIdentity
+    public class BlueskyIdentity(string name, string password) : ClaimsIdentity(new BlueskyIdentityInner(name))
     {
-        public string AuthenticationType => "bluesky";
-        public bool IsAuthenticated => true;
-        public string Name { get; } = name;
+        public new string Name { get; } = name;
+        public string Password { get; } = password;
+    
+        private class BlueskyIdentityInner(string name) : IIdentity
+        {
+            public string AuthenticationType => "bluesky";
+            public bool IsAuthenticated => true;
+            public string Name { get; } = name;
+        }
     }
 }

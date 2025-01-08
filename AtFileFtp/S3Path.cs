@@ -1,4 +1,4 @@
-﻿namespace AtFileWebDav;
+﻿namespace AtFileFtp;
 
 /// <summary>
 /// Helper functions for S3 paths.

@@ -1,6 +1,6 @@
 ﻿using System.Text.RegularExpressions;
 
-namespace AtFileWebDav;
+namespace AtFileFtp;
 
 public static class Rkeys
 {

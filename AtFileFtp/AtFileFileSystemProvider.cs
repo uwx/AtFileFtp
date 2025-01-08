@@ -11,7 +11,7 @@ using FubarDev.FtpServer.FileSystem;
 using Microsoft.Extensions.Logging.Debug;
 using File = FishyFlip.Lexicon.Blue.Zio.Atfile.File;
 
-namespace AtFileWebDav;
+namespace AtFileFtp;
 
 public class AtFileFileSystemProvider : IFileSystemClassFactory
 {
