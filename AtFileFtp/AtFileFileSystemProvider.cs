@@ -1,4 +1,5 @@
-﻿using System.Net.Http.Headers;
+﻿using System.Collections.Concurrent;
+using System.Net.Http.Headers;
 using FishyFlip;
 using FishyFlip.Lexicon.Blue.Zio.Atfile;
 using FishyFlip.Lexicon.Com.Atproto.Repo;
@@ -94,16 +95,41 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
     public StringComparer FileSystemEntryComparer => StringComparer.Ordinal;
     public IUnixDirectoryEntry Root { get; } = new AtFileDirectoryEntry(true, "");
 
+    private readonly Lock _recordCacheLock = new();
+    private Dictionary<string, Record> _recordCache = new();
+
     public async Task<IReadOnlyList<IUnixFileSystemEntry>> GetEntriesAsync(IUnixDirectoryEntry directoryEntry, CancellationToken cancellationToken)
     {
         // TODO paginate
-        var uploads = (await atProtocol.ListUploadAsync(did, limit: 100, cancellationToken: cancellationToken))
-            .HandleResult();
 
-        return uploads?.Records?
+        IEnumerable<Record>? records = null;
+        lock (_recordCacheLock)
+        {
+            if (_recordCache.Count > 0)
+            {
+                records = _recordCache.Select(e => e.Value);
+            }
+        }
+
+        if (records == null)
+        {
+            var uploads = (await atProtocol.ListUploadAsync(did, limit: 100, cancellationToken: cancellationToken))
+                .HandleResult();
+
+            records = uploads?.Records ?? [];
+
+            lock (_recordCacheLock)
+            {
+                _recordCache = new Dictionary<string, Record>(
+                    records.Select(record => KeyValuePair.Create(record.Uri!.Rkey, record))
+                );
+            }
+        }
+
+        return records
             .Where(record => IsMemberOfDirectory((directoryEntry as AtFileDirectoryEntry)!, record))
             .Select(CreateFileSystemEntry)
-            .ToArray() ?? [];
+            .ToArray();
     }
 
     private bool IsMemberOfDirectory(AtFileDirectoryEntry directoryEntry, Record record)
@@ -150,21 +176,49 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
             Rkeys.FromFilePath(name)
         );
 
-        return (await (await atProtocol.GetUploadAsync(did, fullRkey, cancellationToken: cancellationToken))
-            .MatchAsync<Result<GetRecordOutput?>>(
-                output => Task.FromResult<Result<GetRecordOutput?>>(output),
-                async error => await atProtocol.GetUploadAsync(did, name, cancellationToken: cancellationToken)))
-            .Match<IUnixFileSystemEntry?>(
-                output =>
-                {
-                    var upload = (output?.Value as Upload)!;
+        Record? record;
+        
+        lock (_recordCacheLock)
+        {
+            _recordCache.TryGetValue(fullRkey, out record);
 
-                    return upload.Meta?.Reason == IsDirectoryKey
-                        ? new AtFileDirectoryEntry(false, fullRkey)
-                        : new AtFileFileEntry(upload.File?.Size ?? upload.Blob?.Size ?? 0, fullRkey);
-                },
-                error => null
-            );
+            if (record == null)
+            {
+                _recordCache.TryGetValue(name, out record);
+            }
+        }
+
+        if (record == null)
+        {
+            var (result, error) =
+                (await atProtocol.GetUploadAsync(did, fullRkey, cancellationToken: cancellationToken));
+
+            if (result == null)
+            {
+                // fallback to name
+                (result, error) = await atProtocol.GetUploadAsync(did, name, cancellationToken: cancellationToken);
+            }
+
+            if (result != null)
+            {
+                record = new Record(
+                    result.Uri,
+                    result.Cid,
+                    result.Value
+                );
+            }
+        }
+
+        if (record == null)
+        {
+            return null;
+        }
+
+        var upload = (record.Value as Upload)!;
+
+        return upload.Meta?.Reason == IsDirectoryKey
+            ? new AtFileDirectoryEntry(false, fullRkey)
+            : new AtFileFileEntry(upload.File?.Size ?? upload.Blob?.Size ?? 0, fullRkey);
     }
 
     public Task<IUnixFileSystemEntry> MoveAsync(IUnixDirectoryEntry parent, IUnixFileSystemEntry source, IUnixDirectoryEntry target, string fileName,
@@ -181,6 +235,10 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
             cancellationToken: cancellationToken
         )).HandleResult();
 
+        lock (_recordCacheLock)
+        {
+            _recordCache.Clear();
+        }
     }
 
     public async Task<IUnixDirectoryEntry> CreateDirectoryAsync(IUnixDirectoryEntry targetDirectory, string directoryName, CancellationToken cancellationToken)
@@ -205,6 +263,11 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
             rkey: fullRkey,
             cancellationToken: cancellationToken
         )).HandleResult();
+        
+        lock (_recordCacheLock)
+        {
+            _recordCache.Clear();
+        }
 
         return new AtFileDirectoryEntry(false, fullRkey);
     }
@@ -248,7 +311,7 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
             .HandleResult()!;
         
         (await atProtocol.CreateUploadAsync(
-            new Upload
+            record: new Upload
             {
                 Blob = result.Blob,
                 File = new File
@@ -260,6 +323,11 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
             rkey: fullRkey,
             cancellationToken: cancellationToken
         )).HandleResult();
+        
+        lock (_recordCacheLock)
+        {
+            _recordCache.Clear();
+        }
 
         return null;
     }
@@ -271,9 +339,10 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
 
         var result = (await atProtocol.UploadBlobAsync(content, cancellationToken: cancellationToken))
             .HandleResult()!;
-        
+
         (await atProtocol.PutUploadAsync(
-            new Upload
+            repo: did,
+            record: new Upload
             {
                 Blob = result.Blob,
                 File = new File
@@ -285,6 +354,11 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
             rkey: (fileEntry as AtFileFileEntry)!.Rkey,
             cancellationToken: cancellationToken
         )).HandleResult();
+        
+        lock (_recordCacheLock)
+        {
+            _recordCache.Clear();
+        }
 
         return null;
     }
