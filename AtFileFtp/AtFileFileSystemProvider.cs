@@ -272,7 +272,7 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSyste
         var result = (await atProtocol.UploadBlobAsync(content, cancellationToken: cancellationToken))
             .HandleResult()!;
         
-        (await atProtocol.CreateUploadAsync(
+        (await atProtocol.PutUploadAsync(
             new Upload
             {
                 Blob = result.Blob,
