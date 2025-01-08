@@ -2,10 +2,14 @@
 
 // Setup dependency injection
 
+using System.Security.Claims;
+using System.Security.Principal;
 using AtFileWebDav;
 using dotenv.net;
 using FishyFlip.Models;
 using FubarDev.FtpServer;
+using FubarDev.FtpServer.AccountManagement;
+using FubarDev.FtpServer.AccountManagement.Compatibility;
 using FubarDev.FtpServer.FileSystem;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -22,8 +26,11 @@ services
         Environment.GetEnvironmentVariable("BSKY_PASSWORD")!,
         Environment.GetEnvironmentVariable("BSKY_PDS")!
     ))
-    .AddFtpServer(builder => builder
-        .EnableAnonymousAuthentication()); // allow anonymous logins
+    .AddSingleton<IMembershipProvider>(new AllowAnyMembershipProvider())
+    .AddFtpServer(builder =>
+    {
+        
+    }); // allow anonymous logins
 
 // Configure the FTP server
 services.Configure<FtpServerOptions>(opt => opt.ServerAddress = "127.0.0.1");
@@ -42,4 +49,20 @@ await using (var serviceProvider = services.BuildServiceProvider())
 
     // Stop the FTP server
     await ftpServerHost.StopAsync(CancellationToken.None);
+}
+
+public class AllowAnyMembershipProvider : IMembershipProvider
+{
+    public Task<MemberValidationResult> ValidateUserAsync(string username, string password)
+    {
+        return Task.FromResult(new MemberValidationResult(MemberValidationStatus.AuthenticatedUser, new ClaimsPrincipal(new BlueskyIdentity(username, password))));
+    }
+}
+
+public class BlueskyIdentity(string name, string password) : IIdentity
+{
+    public string? AuthenticationType => "bluesky";
+    public bool IsAuthenticated => true;
+    public string? Name { get; } = name;
+    public string Password { get; } = password;
 }
