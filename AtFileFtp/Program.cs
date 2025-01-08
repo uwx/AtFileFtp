@@ -21,11 +21,7 @@ var services = new ServiceCollection();
 // DotNetFileSystemProvider = Use the .NET file system functionality
 // AnonymousMembershipProvider = allow only anonymous logins
 services
-    .AddSingleton<IFileSystemClassFactory>(new AtFileFileSystemProvider(
-        ATDid.Create(Environment.GetEnvironmentVariable("BSKY_USERNAME")!)!,
-        Environment.GetEnvironmentVariable("BSKY_PASSWORD")!,
-        Environment.GetEnvironmentVariable("BSKY_PDS")!
-    ))
+    .AddSingleton<IFileSystemClassFactory>(new AtFileFileSystemProvider())
     .AddSingleton<IMembershipProvider>(new AllowAnyMembershipProvider())
     .AddFtpServer(builder =>
     {
@@ -59,10 +55,15 @@ public class AllowAnyMembershipProvider : IMembershipProvider
     }
 }
 
-public class BlueskyIdentity(string name, string password) : IIdentity
+public class BlueskyIdentity(string name, string password) : ClaimsIdentity(new BlueskyIdentityInner(name))
 {
-    public string? AuthenticationType => "bluesky";
-    public bool IsAuthenticated => true;
-    public string? Name { get; } = name;
+    public new string Name { get; } = name;
     public string Password { get; } = password;
+    
+    private class BlueskyIdentityInner(string name) : IIdentity
+    {
+        public string AuthenticationType => "bluesky";
+        public bool IsAuthenticated => true;
+        public string Name { get; } = name;
+    }
 }

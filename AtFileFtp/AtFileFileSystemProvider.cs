@@ -15,29 +15,24 @@ namespace AtFileWebDav;
 
 public class AtFileFileSystemProvider : IFileSystemClassFactory
 {
-    private readonly ATDid _accountName;
-    private readonly string _password;
     private readonly ATProtocol _atProtocol;
 
-    public AtFileFileSystemProvider(ATDid accountName, string password, string pds = "https://bsky.social")
+    public AtFileFileSystemProvider()
     {
-        _accountName = accountName;
-        _password = password;
         // Include a ILogger if you want additional logging from the base library.
         var debugLog = new DebugLoggerProvider();
         var atProtocolBuilder = new ATProtocolBuilder()
             .EnableAutoRenewSession(true)
-            // Set the instance URL for the PDS you wish to connect to.
-            // Defaults to bsky.social.
-            .WithInstanceUrl(new Uri(pds))
             .WithLogger(debugLog.CreateLogger("FishyFlipDebug"));
         _atProtocol = atProtocolBuilder.Build();
     }
 
     public async Task<IUnixFileSystem> Create(IAccountInformation accountInformation)
     {
-        (await _atProtocol.AuthenticateWithPasswordResultAsync(_accountName.ToString(), _password)).HandleResult();
-        return new AtFileFileSystem(_atProtocol, _accountName, _password);
+        var identity = (accountInformation.FtpUser.Identity as BlueskyIdentity)!;
+        
+        var session = (await _atProtocol.AuthenticateWithPasswordResultAsync(identity.Name, identity.Password)).HandleResult();
+        return new AtFileFileSystem(_atProtocol, session!.Did);
     }
 }
 
@@ -90,7 +85,7 @@ public class AtFileFileEntry(long size, string rkey, DateTimeOffset? modified = 
     public long Size { get; } = size;
 }
 
-public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password) : IUnixFileSystem
+public class AtFileFileSystem(ATProtocol atProtocol, ATDid did) : IUnixFileSystem
 {
     public const string IsDirectoryKey = "This file is a directory. Please do not replace it with data.";
     
