@@ -43,14 +43,8 @@ public class AtFileFileSystemProvider : IFileSystemClassFactory
 
 public class AtFileFileSystemEntry : IUnixFileSystemEntry
 {
-    public AtFileFileSystemEntry(string name, string? rkey = null, DateTimeOffset? modified = null, DateTimeOffset? created = null)
+    public AtFileFileSystemEntry(string rkey, DateTimeOffset? modified = null, DateTimeOffset? created = null)
     {
-        if (name == null && rkey == null) throw new ArgumentNullException(null, "Either name or rkey must be provided");
-        rkey ??= Rkeys.FromFilePath(name!);
-
-        Name = name;
-
-        RealName = name;
         Rkey = rkey;
 
         LastWriteTime = modified;
@@ -59,13 +53,12 @@ public class AtFileFileSystemEntry : IUnixFileSystemEntry
 
     public string Owner => "owner";
     public string Group => "group";
-    public string Name { get; }
+    public string Name => Rkeys.ToFilePath(Rkeys.GetFileName(Rkey));
     public IUnixPermissions Permissions { get; } = new DefaultPermissions();
     public DateTimeOffset? LastWriteTime { get; }
     public DateTimeOffset? CreatedTime { get; }
     public long NumberOfLinks => 1;
 
-    public string? RealName { get; }
     public string Rkey { get; }
 
     private class DefaultPermissions : IUnixPermissions
@@ -83,15 +76,15 @@ public class AtFileFileSystemEntry : IUnixFileSystemEntry
     }
 }
 
-public class AtFileDirectoryEntry(string name, bool isRoot, string? rkey = null, DateTimeOffset? modified = null, DateTimeOffset? created = null)
-    : AtFileFileSystemEntry(name, name.EndsWith(':') || isRoot ? rkey : rkey + ':', modified, created), IUnixDirectoryEntry
+public class AtFileDirectoryEntry(bool isRoot, string rkey, DateTimeOffset? modified = null, DateTimeOffset? created = null)
+    : AtFileFileSystemEntry(rkey.EndsWith(':') || isRoot ? rkey : rkey + ':', modified, created), IUnixDirectoryEntry
 {
     public bool IsRoot { get; } = isRoot;
     public bool IsDeletable => true;
 }
 
-public class AtFileFileEntry(string name, long size, string? rkey = null, DateTimeOffset? modified = null, DateTimeOffset? created = null)
-    : AtFileFileSystemEntry(name, rkey, modified, created), IUnixFileEntry
+public class AtFileFileEntry(long size, string rkey, DateTimeOffset? modified = null, DateTimeOffset? created = null)
+    : AtFileFileSystemEntry(rkey, modified, created), IUnixFileEntry
 {
     public long Size { get; } = size;
 }
@@ -103,8 +96,8 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
     public bool SupportsAppend => false;
     public bool SupportsNonEmptyDirectoryDelete => false;
     public StringComparer FileSystemEntryComparer => StringComparer.Ordinal;
-    public IUnixDirectoryEntry Root { get; } = new AtFileDirectoryEntry("/", true);
-    
+    public IUnixDirectoryEntry Root { get; } = new AtFileDirectoryEntry(true, "");
+
     public async Task<IReadOnlyList<IUnixFileSystemEntry>> GetEntriesAsync(IUnixDirectoryEntry directoryEntry, CancellationToken cancellationToken)
     {
         // TODO paginate
@@ -119,7 +112,18 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
 
     private bool IsMemberOfDirectory(AtFileDirectoryEntry directoryEntry, Record record)
     {
-        return record.Uri!.Rkey.StartsWith(directoryEntry.Rkey) && record.Uri!.Rkey != directoryEntry.Rkey;
+        var rkey = record.Uri!.Rkey;
+        if (!rkey.StartsWith(directoryEntry.Rkey) || rkey == directoryEntry.Rkey)
+        {
+            return false;
+        }
+
+        if (rkey.IndexOf(':', directoryEntry.Rkey.Length) is var idx and > -1)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static AtFileFileSystemEntry CreateFileSystemEntry(Record e)
@@ -129,20 +133,22 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
 
         if (upload.Meta?.Reason == IsDirectoryKey)
         {
-            return new AtFileDirectoryEntry(upload.File?.Name ?? rkey, false, rkey);
+            return new AtFileDirectoryEntry(false, rkey);
         }
         else
         {
-            return new AtFileFileEntry(upload.File?.Name ?? rkey, upload.File?.Size ?? upload.Blob?.Size ?? 0, rkey);
+            return new AtFileFileEntry(upload.File?.Size ?? upload.Blob?.Size ?? 0, rkey);
         }
     }
 
     public async Task<IUnixFileSystemEntry?> GetEntryByNameAsync(IUnixDirectoryEntry directoryEntry, string name, CancellationToken cancellationToken)
     {
-        var path = S3Path.Combine((directoryEntry as AtFileDirectoryEntry)!.RealName, name);
-        var rkey = Rkeys.FromFilePath(path);
+        var fullRkey = S3Path.Combine(
+            (directoryEntry as AtFileDirectoryEntry)!.Rkey,
+            Rkeys.FromFilePath(name)
+        );
 
-        return (await (await atProtocol.GetUploadAsync(did, rkey, cancellationToken: cancellationToken))
+        return (await (await atProtocol.GetUploadAsync(did, fullRkey, cancellationToken: cancellationToken))
             .MatchAsync<Result<GetRecordOutput?>>(
                 output => Task.FromResult<Result<GetRecordOutput?>>(output),
                 async error => await atProtocol.GetUploadAsync(did, name, cancellationToken: cancellationToken)))
@@ -152,8 +158,8 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
                     var upload = (output?.Value as Upload)!;
 
                     return upload.Meta?.Reason == IsDirectoryKey
-                        ? new AtFileDirectoryEntry(upload.File?.Name ?? rkey, false, rkey)
-                        : new AtFileFileEntry(upload.File?.Name ?? rkey, upload.File?.Size ?? upload.Blob?.Size ?? 0, rkey);
+                        ? new AtFileDirectoryEntry(false, fullRkey)
+                        : new AtFileFileEntry(upload.File?.Size ?? upload.Blob?.Size ?? 0, fullRkey);
                 },
                 error => null
             );
@@ -177,34 +183,33 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
 
     public async Task<IUnixDirectoryEntry> CreateDirectoryAsync(IUnixDirectoryEntry targetDirectory, string directoryName, CancellationToken cancellationToken)
     {
-        var path = S3Path.Combine((targetDirectory as AtFileDirectoryEntry)!.RealName, directoryName);
-        var rkey = Rkeys.FromFilePath(path);
+        var fullRkey = S3Path.Combine(
+            (targetDirectory as AtFileDirectoryEntry)!.Rkey,
+            Rkeys.FromFilePath(directoryName) + ":"
+        );
 
         (await atProtocol.CreateUploadAsync(
             new Upload
             {
                 File = new File
                 {
-                    Name = path,
+                    Name = Rkeys.ToFilePath(fullRkey),
                 },
                 Meta = new Unknown
                 {
                     Reason = IsDirectoryKey
                 },
             },
-            rkey: rkey,
+            rkey: fullRkey,
             cancellationToken: cancellationToken
         )).HandleResult();
 
-        return new AtFileDirectoryEntry(path, false, rkey);
+        return new AtFileDirectoryEntry(false, fullRkey);
     }
 
     public async Task<Stream> OpenReadAsync(IUnixFileEntry fileEntry, long startPosition, CancellationToken cancellationToken)
     {
-        var upload = (await (await atProtocol.GetUploadAsync(did, (fileEntry as AtFileFileEntry)!.Rkey, cancellationToken: cancellationToken))
-            .MatchAsync<Result<GetRecordOutput?>>(
-                output => Task.FromResult<Result<GetRecordOutput?>>(output),
-                async error => await atProtocol.GetUploadAsync(did, (fileEntry as AtFileFileEntry)!.Name, cancellationToken: cancellationToken)))
+        var upload = (await atProtocol.GetUploadAsync(did, (fileEntry as AtFileFileEntry)!.Rkey, cancellationToken: cancellationToken))
             .Match<Result<Upload?>>(
                 output => output?.Value as Upload,
                 error => error
@@ -229,7 +234,10 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
 
     public async Task<IBackgroundTransfer?> CreateAsync(IUnixDirectoryEntry targetDirectory, string fileName, Stream data, CancellationToken cancellationToken)
     {
-        var path = S3Path.Combine((targetDirectory as AtFileDirectoryEntry)!.RealName, fileName);
+        var fullRkey = S3Path.Combine(
+            (targetDirectory as AtFileDirectoryEntry)!.Rkey,
+            Rkeys.FromFilePath(fileName)
+        );
 
         using var content = new StreamContent(data);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream"); // TODO
@@ -243,11 +251,11 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
                 Blob = result.Blob,
                 File = new File
                 {
-                    Name = path,
+                    Name = Rkeys.ToFilePath(fullRkey),
                     Size = data.CanSeek ? data.Length : null,
                 },
             },
-            rkey: Rkeys.FromFilePath(path),
+            rkey: fullRkey,
             cancellationToken: cancellationToken
         )).HandleResult();
 
@@ -268,7 +276,7 @@ public class AtFileFileSystem(ATProtocol atProtocol, ATDid did, string password)
                 Blob = result.Blob,
                 File = new File
                 {
-                    Name = (fileEntry as AtFileFileEntry)!.RealName,
+                    Name = Rkeys.ToFilePath((fileEntry as AtFileFileEntry)!.Rkey),
                     Size = data.CanSeek ? data.Length : null,
                 },
             },
