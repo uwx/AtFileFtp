@@ -56,9 +56,7 @@ public static class Rkeys
 
     public static string GetFileName(string rkey)
     {
-        if (rkey.EndsWith(':')) rkey = rkey[..^1];
-
-        return rkey.IndexOf(':') is var idx and > -1 ? rkey[(idx + 1)..] : rkey;
+        return rkey.LastIndexOf(':') is var idx && idx > -1 && idx < rkey.Length - 1 ? rkey[(idx + 1)..] : rkey;
     }
     
     /// <summary>
