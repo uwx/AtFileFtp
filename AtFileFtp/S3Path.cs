@@ -23,6 +23,6 @@ internal static class S3Path
             return first;
         }
 
-        return string.Join("/", first.TrimEnd('/'), second);
+        return string.Join('/', first.TrimEnd('/'), second);
     }
 }
