@@ -47,7 +47,7 @@ public class AtFileFileSystemEntry : IUnixFileSystemEntry
         Rkey = rkey;
         Name = Rkeys.ToFilePath(Rkeys.GetFileName(Rkey));
 
-        if (realName != null && realName != Name)
+        if (realName != null && realName != Name && !Rkey.Contains(':'))
         {
             Name += $":{realName}";
         }
