@@ -136,15 +136,42 @@ public class AtFileFileSystem(HttpClient httpClient, ATProtocol atProtocol, ATDi
 
     private async Task PopulateEntryCache(CancellationToken cancellationToken)
     {
-        var uploads = (await atProtocol.ListUploadAsync(did, limit: 100, cancellationToken: cancellationToken))
-            .HandleResult();
-
-        var records = uploads?.Records ?? [];
-
+        var records = await PaginatedListUploadsAsync(cancellationToken: cancellationToken);
+        
         foreach (var entry in records.Select(CreateFileSystemEntry))
         {
             _entryCache.Add(entry.Rkey, entry);
         }
+    }
+
+    private async Task<List<Record>> PaginatedListUploadsAsync(CancellationToken cancellationToken)
+    {
+        string? cursor = null;
+        var results = new List<Record>();
+        do
+        {
+            var data = (await atProtocol.ListUploadAsync(did, limit: 100, cancellationToken: cancellationToken))
+                .HandleResult();
+
+            var theseResults = data?.Records;
+
+            if (
+                theseResults == null || 
+                theseResults.Count == 0 ||
+                theseResults.All(e => results.FirstOrDefault(e1 => Equals(e1.Uri, e.Uri)) != null)
+            )
+            {
+                break;
+            }
+
+            results.AddRange(theseResults);
+
+            cursor = data.Cursor;
+
+            if (string.IsNullOrEmpty(cursor)) break;
+        } while (!string.IsNullOrEmpty(cursor));
+
+        return results;
     }
 
     private bool IsMemberOfDirectory(AtFileDirectoryEntry directoryEntry, AtFileFileSystemEntry record)
